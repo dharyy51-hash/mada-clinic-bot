@@ -29,8 +29,8 @@ def send_booking_email(conversation, business_type):
             server.starttls()
             server.login(email_user, email_pass)
             server.send_message(msg)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"EMAIL ERROR: {e}")
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "mada-kw-secret-2024")
