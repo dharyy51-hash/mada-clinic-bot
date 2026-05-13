@@ -43,7 +43,10 @@ def chat():
 
     conversations[session_id].append({"role": "user", "content": user_message})
 
-    reply = get_bot_response(conversations[session_id], business_type)
+    try:
+        reply = get_bot_response(conversations[session_id], business_type)
+    except Exception as e:
+        return jsonify({"reply": f"خطأ في الاتصال: {str(e)}"}), 200
 
     conversations[session_id].append({"role": "assistant", "content": reply})
 
