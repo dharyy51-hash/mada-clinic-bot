@@ -2,9 +2,33 @@ from flask import Flask, request, jsonify, render_template, session
 from bot import get_bot_response
 from configs import get_config, BUSINESS_CONFIGS
 from dotenv import load_dotenv
-import os, uuid
+import os, uuid, smtplib
+from email.mime.text import MIMEText
 
 load_dotenv()
+
+BOOKING_KEYWORDS = ["تم تسجيل طلب موعدك", "تم تسجيل طلبك", "سيتواصل معك", "سنتواصل معك"]
+
+def send_booking_email(conversation, business_type):
+    try:
+        email_user = os.environ.get("EMAIL_USER")
+        email_pass = os.environ.get("EMAIL_PASS")
+        if not email_user or not email_pass:
+            return
+        recent = conversation[-8:] if len(conversation) > 8 else conversation
+        body = f"📅 حجز جديد من البوت الذكي\nنوع النشاط: {business_type}\n\n"
+        for msg in recent:
+            role = "العميل" if msg["role"] == "user" else "البوت"
+            body += f"{role}:\n{msg['content']}\n\n"
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["Subject"] = f"🔔 حجز جديد - {business_type}"
+        msg["From"] = email_user
+        msg["To"] = email_user
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(email_user, email_pass)
+            server.send_message(msg)
+    except Exception:
+        pass
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "mada-kw-secret-2024")
@@ -49,6 +73,9 @@ def chat():
         return jsonify({"reply": f"خطأ في الاتصال: {str(e)}"}), 200
 
     conversations[session_id].append({"role": "assistant", "content": reply})
+
+    if any(kw in reply for kw in BOOKING_KEYWORDS):
+        send_booking_email(conversations[session_id], business_type)
 
     if len(conversations[session_id]) > 20:
         conversations[session_id] = conversations[session_id][-20:]
