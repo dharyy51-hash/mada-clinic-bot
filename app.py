@@ -1,0 +1,88 @@
+from flask import Flask, request, jsonify, render_template, session
+from bot import get_bot_response
+from configs import get_config, BUSINESS_CONFIGS
+from dotenv import load_dotenv
+import os, uuid
+
+load_dotenv()
+
+app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "mada-kw-secret-2024")
+
+conversations = {}
+
+# أمثلة روابط:
+# localhost:5000/clinic
+# localhost:5000/restaurant
+# localhost:5000/cafe
+# localhost:5000/car_showroom
+
+@app.route("/")
+@app.route("/<business_type>")
+def index(business_type="clinic"):
+    if business_type not in BUSINESS_CONFIGS:
+        business_type = "clinic"
+    session["session_id"]     = str(uuid.uuid4())
+    session["business_type"]  = business_type
+    config = get_config(business_type)
+    return render_template("index.html", clinic=config, config=config, business_type=business_type)
+
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    data          = request.json
+    user_message  = data.get("message", "").strip()
+    session_id    = session.get("session_id", str(uuid.uuid4()))
+    business_type = session.get("business_type", "clinic")
+
+    if not user_message:
+        return jsonify({"error": "رسالة فارغة"}), 400
+
+    if session_id not in conversations:
+        conversations[session_id] = []
+
+    conversations[session_id].append({"role": "user", "content": user_message})
+
+    reply = get_bot_response(conversations[session_id], business_type)
+
+    conversations[session_id].append({"role": "assistant", "content": reply})
+
+    if len(conversations[session_id]) > 20:
+        conversations[session_id] = conversations[session_id][-20:]
+
+    return jsonify({"reply": reply})
+
+
+@app.route("/reset", methods=["POST"])
+def reset():
+    session_id = session.get("session_id")
+    if session_id in conversations:
+        del conversations[session_id]
+    return jsonify({"status": "ok"})
+
+
+# Webhook واتساب — يقبل business_type من الـ URL
+# مثال: /webhook/whatsapp/restaurant
+@app.route("/webhook/whatsapp/<business_type>", methods=["POST"])
+def whatsapp_webhook(business_type="clinic"):
+    from_number = request.form.get("From", "")
+    body        = request.form.get("Body", "").strip()
+
+    if not body:
+        return "", 200
+
+    key = f"{business_type}:{from_number}"
+    if key not in conversations:
+        conversations[key] = []
+
+    conversations[key].append({"role": "user", "content": body})
+    reply = get_bot_response(conversations[key], business_type)
+    conversations[key].append({"role": "assistant", "content": reply})
+
+    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response><Message>{reply}</Message></Response>"""
+    return twiml, 200, {"Content-Type": "text/xml"}
+
+
+if __name__ == "__main__":
+    app.run(debug=True, port=5000)
