@@ -24,7 +24,9 @@ def send_booking_email(conversation, business_type):
         msg["Subject"] = f"🔔 حجز جديد - {business_type}"
         msg["From"] = email_user
         msg["To"] = email_user
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.ehlo()
+            server.starttls()
             server.login(email_user, email_pass)
             server.send_message(msg)
     except Exception:
