@@ -2,18 +2,40 @@ from flask import Flask, request, jsonify, render_template, session
 from bot import get_bot_response
 from configs import get_config, BUSINESS_CONFIGS
 from dotenv import load_dotenv
-import os, uuid
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from datetime import datetime
+import os, uuid, sqlite3
 
 load_dotenv()
 
 BOOKING_KEYWORDS = ["تم تسجيل طلب موعدك", "تم تسجيل طلبك", "سيتواصل معك", "سنتواصل معك", "تم تحديث موعدك"]
+MAX_MSG_LENGTH = 500
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "mada-kw-secret-2024")
 
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    default_limits=[],
+    storage_uri="memory://"
+)
+
 conversations = {}
-bookings = []
+
+
+# ── Database ──────────────────────────────────────────────
+def get_db():
+    db = sqlite3.connect("bookings.db", check_same_thread=False)
+    db.execute("""CREATE TABLE IF NOT EXISTS bookings (
+        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        time     TEXT,
+        business TEXT,
+        chat     TEXT
+    )""")
+    db.commit()
+    return db
 
 
 def save_booking(conversation, business_type):
@@ -22,13 +44,19 @@ def save_booking(conversation, business_type):
     for msg in recent:
         role = "العميل" if msg["role"] == "user" else "البوت"
         lines.append(f"{role}: {msg['content']}")
-    bookings.append({
-        "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "business": business_type,
-        "chat": "\n".join(lines)
-    })
+    try:
+        db = get_db()
+        db.execute(
+            "INSERT INTO bookings (time, business, chat) VALUES (?, ?, ?)",
+            (datetime.now().strftime("%Y-%m-%d %H:%M"), business_type, "\n".join(lines))
+        )
+        db.commit()
+        db.close()
+    except Exception as e:
+        print(f"DB ERROR: {e}")
 
 
+# ── Routes ────────────────────────────────────────────────
 @app.route("/")
 @app.route("/<business_type>")
 def index(business_type="clinic"):
@@ -41,6 +69,7 @@ def index(business_type="clinic"):
 
 
 @app.route("/chat", methods=["POST"])
+@limiter.limit("20 per hour")
 def chat():
     data          = request.json
     user_message  = data.get("message", "").strip()
@@ -49,6 +78,9 @@ def chat():
 
     if not user_message:
         return jsonify({"error": "رسالة فارغة"}), 400
+
+    if len(user_message) > MAX_MSG_LENGTH:
+        return jsonify({"reply": "رسالتك طويلة جداً، اختصرها من فضلك."}), 200
 
     if session_id not in conversations:
         conversations[session_id] = []
@@ -73,16 +105,42 @@ def chat():
 
 @app.route("/bookings")
 def show_bookings():
-    password = request.args.get("key", "")
-    if password != os.environ.get("SECRET_KEY", "mada2024"):
-        return "غير مصرح", 403
-    if not bookings:
+    key          = request.args.get("key", "")
+    bookings_key = os.environ.get("BOOKINGS_KEY", os.environ.get("SECRET_KEY", "mada2024"))
+    if key != bookings_key:
+        return "<h3 style='font-family:Arial;padding:20px'>غير مصرح ❌</h3>", 403
+
+    business_filter = request.args.get("b", "")
+
+    try:
+        db   = get_db()
+        if business_filter:
+            rows = db.execute(
+                "SELECT time, business, chat FROM bookings WHERE business=? ORDER BY id DESC",
+                (business_filter,)
+            ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT time, business, chat FROM bookings ORDER BY id DESC"
+            ).fetchall()
+        db.close()
+    except Exception:
+        rows = []
+
+    if not rows:
         return "<h2 style='font-family:Arial;direction:rtl;padding:20px'>لا توجد حجوزات بعد</h2>"
-    html = "<html><head><meta charset='utf-8'></head><body style='font-family:Arial;direction:rtl;padding:20px;background:#0D1B2A;color:white'>"
-    html += f"<h2>📅 الحجوزات ({len(bookings)})</h2>"
-    for b in reversed(bookings):
-        html += f"<div style='background:#1a2d42;margin:10px 0;padding:15px;border-radius:8px;border-right:4px solid #00D4FF'>"
-        html += f"<b>🕐 {b['time']} | {b['business']}</b><pre style='white-space:pre-wrap;color:#ccc'>{b['chat']}</pre></div>"
+
+    html  = "<html><head><meta charset='utf-8'><style>"
+    html += "body{font-family:Arial;direction:rtl;padding:20px;background:#F7F7F8;color:#0D0D0D}"
+    html += "h2{margin-bottom:20px}.card{background:#fff;margin:12px 0;padding:16px;border-radius:12px;"
+    html += "border-right:4px solid #19C37D;box-shadow:0 2px 8px rgba(0,0,0,0.06)}"
+    html += ".meta{font-weight:700;margin-bottom:8px;color:#19C37D}"
+    html += "pre{white-space:pre-wrap;color:#444;font-size:13px;line-height:1.7}"
+    html += "</style></head><body>"
+    html += f"<h2>📅 الحجوزات ({len(rows)})</h2>"
+    for time, business, chat in rows:
+        html += f"<div class='card'><div class='meta'>🕐 {time} &nbsp;|&nbsp; {business}</div>"
+        html += f"<pre>{chat}</pre></div>"
     html += "</body></html>"
     return html
 

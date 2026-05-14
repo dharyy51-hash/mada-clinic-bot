@@ -1,4 +1,5 @@
 anthropic
 flask
+flask-limiter
 python-dotenv
 gunicorn
