@@ -5,8 +5,9 @@ from configs import get_system_prompt
 load_dotenv()
 client = anthropic.Anthropic()
 
-def get_bot_response(messages: list, business_type: str = "clinic") -> str:
-    system = get_system_prompt(business_type)
+def get_bot_response(messages: list, business_type: str = "clinic", system: str = None) -> str:
+    if system is None:
+        system = get_system_prompt(business_type)
 
     response = client.messages.create(
         model="claude-sonnet-4-6",
